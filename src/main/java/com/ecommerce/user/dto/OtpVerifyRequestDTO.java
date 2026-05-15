@@ -1,0 +1,27 @@
+package com.ecommerce.user.dto;
+
+import com.ecommerce.common.util.RegexConstant;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+import lombok.Data;
+
+/**
+ * Request DTO for OTP verification.
+ * Accepts email address or phone number as key and a 6-digit OTP.
+ */
+@Data
+public class OtpVerifyRequestDTO {
+
+    @NotBlank(message = "{otp.key.required}")
+    @Size(max = 128, message = "{otp.key.size}")
+    @Pattern(
+            regexp = RegexConstant.OTP_KEY,
+            message = "{otp.key.invalid}"
+    )
+    private String key;
+
+    @NotBlank(message = "{otp.required}")
+    @Pattern(regexp = RegexConstant.OTP, message = "{otp.invalid}")
+    private String otp;
+}
