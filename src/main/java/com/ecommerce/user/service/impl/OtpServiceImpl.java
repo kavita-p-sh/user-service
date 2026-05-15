@@ -20,6 +20,16 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class OtpServiceImpl implements OtpService {
 
+    private static final String UNKNOWN_MASKED_VALUE = "UNKNOWN";
+    private static final String MASK_VALUE = "***";
+    private static final String SHORT_MASK_VALUE = "****";
+    private static final String EMAIL_SEPARATOR = "@";
+
+    private static final int VISIBLE_PREFIX_LENGTH = 2;
+    private static final int VISIBLE_SUFFIX_LENGTH = 2;
+    private static final int MIN_LENGTH_FOR_PARTIAL_MASK = 4;
+
+
     private final RedisTemplate<String, Object> redisTemplate;
     private final OtpGenerator otpGenerator;
 
@@ -33,8 +43,11 @@ public class OtpServiceImpl implements OtpService {
 
         checkIpBlocked(ipAddress);
         checkIpRequestLimit(ipAddress);
+        checkIdentityOtpRequestLimit(uniqueKey);
 
-        log.info("Generating OTP for key: {} from IP: {}", uniqueKey, ipAddress);
+        String maskedKey = maskUniqueKey(uniqueKey);
+
+        log.info("Generating OTP for key: {} from IP: {}", maskedKey, ipAddress);
         String otpKey = CacheConstant.OTP_PREFIX + uniqueKey;
 
         String otp = otpGenerator.generateOtp();
@@ -50,10 +63,46 @@ public class OtpServiceImpl implements OtpService {
             );
         }
 
+        redisTemplate.delete(CacheConstant.VERIFY_COUNT_PREFIX + uniqueKey);
         log.info("OTP stored in cache for key: {} with TTL: {} minutes",
-                uniqueKey, CacheConstant.OTP_TTL_MINUTES);
+                maskedKey, CacheConstant.OTP_TTL_MINUTES);
 
         return CacheConstant.OTP_SENT;
+    }
+
+    /**
+     * Tracks OTP generation count per identity such as email or phone number.
+     *
+     * This prevents attackers from requesting too many OTPs for the same
+     * phone/email even if they rotate IP addresses.
+     *
+     * @param uniqueKey email or phone number for which OTP is requested
+     * @throws TooManyRequestsException if identity request limit is exceeded
+     */
+    private void checkIdentityOtpRequestLimit(String uniqueKey) {
+
+        String maskedKey = maskUniqueKey(uniqueKey);
+
+        String key = CacheConstant.OTP_COUNT_PREFIX + uniqueKey;
+
+        Long count = redisTemplate.opsForValue().increment(key);
+
+        if (count != null && count == 1) {
+            redisTemplate.expire(
+                    key,
+                    CacheConstant.OTP_REQUEST_IDENTITY_TTL_MINUTES,
+                    TimeUnit.MINUTES
+            );
+        }
+
+        log.info("OTP request count {} for identity: {}", count, maskedKey);
+
+        if (count != null && count > CacheConstant.MAX_OTP_REQUEST_PER_IDENTITY) {
+            log.error("Too many OTP requests for identity: {}", maskedKey);
+            throw new TooManyRequestsException(
+                    CacheConstant.TOO_MANY_OTP_REQUESTS_FOR_IDENTITY
+            );
+        }
     }
 
 
@@ -69,50 +118,36 @@ public class OtpServiceImpl implements OtpService {
     public boolean verifyOtp(String uniqueKey, String enteredOtp, String ipAddress) {
 
         checkIpBlocked(ipAddress);
-
         checkIpVerifyLimit(ipAddress);
-        log.info("Verifying OTP for key: {} from IP: {}", uniqueKey, ipAddress);
-        String otpKey = CacheConstant.OTP_PREFIX + uniqueKey;
+        checkIdentityVerifyLimit(uniqueKey);
 
+        String maskedKey = maskUniqueKey(uniqueKey);
+
+        log.info("Verifying OTP for key: {} from IP: {}", maskedKey, ipAddress);
+
+        String otpKey = CacheConstant.OTP_PREFIX + uniqueKey;
         Object cachedOtp = redisTemplate.opsForValue().get(otpKey);
 
         if (cachedOtp == null) {
-            log.warn("OTP expired or not found for key: {}", uniqueKey);
+            log.warn("OTP expired or not found for key: {}", maskedKey);
             throw new OtpExpiredException(CacheConstant.OTP_EXPIRED);
-        }
-
-
-        String attemptKey = CacheConstant.OTP_ATTEMPT_PREFIX + uniqueKey;
-        Long attempts = redisTemplate.opsForValue().increment(attemptKey);
-
-        if (attempts != null && attempts == 1) {
-            redisTemplate.expire(attemptKey, CacheConstant.OTP_ATTEMPT_TTL_MINUTES, TimeUnit.MINUTES);
-        }
-        log.info("OTP verification attempt {} for key: {}", attempts, uniqueKey);
-
-
-        if (attempts != null && attempts > CacheConstant.MAX_VERIFY_ATTEMPTS) {
-            log.error("Verification limit exceeded for key: {}", uniqueKey);
-
-            redisTemplate.delete(otpKey);
-            throw new VerificationLimitExceededException(CacheConstant.VERIFICATION_LIMIT_EXCEED);
         }
 
         if (cachedOtp.toString().equals(enteredOtp)) {
             redisTemplate.delete(otpKey);
-            redisTemplate.delete(attemptKey);
-            log.info("OTP verified successfully for key: {}", uniqueKey);
+            redisTemplate.delete(CacheConstant.VERIFY_COUNT_PREFIX + uniqueKey);
 
+            log.info("OTP verified successfully for key: {}", maskedKey);
             return true;
         }
 
-        log.warn("Invalid OTP entered for key: {}", uniqueKey);
+        log.warn("Invalid OTP entered for key: {}", maskedKey);
         return false;
     }
 
     private void checkIpVerifyLimit(String ip) {
 
-        String key = CacheConstant.VERIFY_COUNT_PREFIX + ip;
+        String key = CacheConstant.VERIFY_IP_COUNT_PREFIX + ip;
 
         Long count = redisTemplate.opsForValue().increment(key);
 
@@ -131,7 +166,7 @@ public class OtpServiceImpl implements OtpService {
             );
 
             log.error("IP blocked due to too many verify attempts: {}", ip);
-            throw new TooManyRequestsException("Too many OTP verification attempts from this IP");
+            throw new TooManyRequestsException(CacheConstant.TOO_MANY_REQUESTS);
         }
     }
 
@@ -142,7 +177,10 @@ public class OtpServiceImpl implements OtpService {
      */
     @Override
     public String getCachedOtp(String uniqueKey) {
-        log.debug("Fetching cached OTP for key: {}", uniqueKey);
+
+        String maskedKey = maskUniqueKey(uniqueKey);
+
+        log.debug("Fetching cached OTP for key: {}", maskedKey);
 
         Object value = redisTemplate.opsForValue().get(CacheConstant.OTP_PREFIX + uniqueKey);
         return value != null ? value.toString() : null;
@@ -158,7 +196,10 @@ public class OtpServiceImpl implements OtpService {
         Long ttl = redisTemplate.getExpire(
                 CacheConstant.OTP_PREFIX + uniqueKey,
                 TimeUnit.SECONDS);
-        log.debug("OTP TTL for key: {} is {} seconds", uniqueKey, ttl);
+
+        String maskedKey = maskUniqueKey(uniqueKey);
+
+        log.debug("OTP TTL for key: {} is {} seconds", maskedKey, ttl);
 
         if (ttl == null) {
             return -1;
@@ -189,12 +230,12 @@ public class OtpServiceImpl implements OtpService {
      * @throws TooManyRequestsException if request limit exceeded
      */
     private void checkIpRequestLimit(String ip) {
-        String key = CacheConstant.OTP_COUNT_PREFIX + ip;
 
+        String key = CacheConstant.OTP_IP_COUNT_PREFIX + ip;
         Long count = redisTemplate.opsForValue().increment(key);
 
         if (count != null && count == 1) {
-            redisTemplate.expire(key, CacheConstant.OTP_ATTEMPT_TTL_MINUTES, TimeUnit.MINUTES);
+            redisTemplate.expire(key, CacheConstant.OTP_REQUEST_TTL_MINUTES, TimeUnit.MINUTES);
         }
         log.info("OTP request count {} for IP: {}", count, ip);
 
@@ -209,5 +250,79 @@ public class OtpServiceImpl implements OtpService {
             log.error("IP blocked due to too many requests: {}", ip);
             throw new TooManyRequestsException(CacheConstant.TOO_MANY_REQUESTS);
         }
+    }
+
+    /**
+     * Tracks OTP verification attempts per identity such as email or phone number.
+     *
+     * This prevents brute-force attacks for the same victim identity
+     * even if requests come from multiple IP addresses.
+     *
+     * @param uniqueKey email or phone number
+     * @throws VerificationLimitExceededException if verify attempt limit is exceeded
+     */
+    private void checkIdentityVerifyLimit(String uniqueKey) {
+
+        String maskedKey = maskUniqueKey(uniqueKey);
+        String key = CacheConstant.VERIFY_COUNT_PREFIX + uniqueKey;
+
+        Long count = redisTemplate.opsForValue().increment(key);
+
+        if (count != null && count == 1) {
+            redisTemplate.expire(
+                    key,
+                    CacheConstant.VERIFY_IDENTITY_TTL_MINUTES,
+                    TimeUnit.MINUTES
+            );
+        }
+
+        log.info("OTP verify count {} for identity: {}", count, maskedKey);
+
+        if (count != null && count > CacheConstant.MAX_VERIFY_REQUEST_PER_IDENTITY) {
+            redisTemplate.delete(CacheConstant.OTP_PREFIX + uniqueKey);
+            redisTemplate.delete(key);
+
+            log.error("Verification limit exceeded for identity: {}", maskedKey);
+
+            throw new VerificationLimitExceededException(
+                    CacheConstant.TOO_MANY_VERIFY_ATTEMPTS_FOR_IDENTITY
+            );
+        }
+    }
+
+    /**
+     * Masks email or phone number before writing it to logs.
+     *
+     * @param uniqueKey email or phone number
+     * @return masked value safe for logs
+     */
+    private String maskUniqueKey(String uniqueKey) {
+
+        if (uniqueKey == null || uniqueKey.isBlank()) {
+            return UNKNOWN_MASKED_VALUE;
+        }
+
+        if (uniqueKey.contains(EMAIL_SEPARATOR)) {
+            String[] parts = uniqueKey.split(EMAIL_SEPARATOR, 2);
+            String localPart = parts[0];
+            String domain = parts[1];
+
+            if (localPart.length() <= VISIBLE_PREFIX_LENGTH) {
+                return MASK_VALUE + EMAIL_SEPARATOR + domain;
+            }
+
+            return localPart.substring(0, VISIBLE_PREFIX_LENGTH)
+                    + MASK_VALUE
+                    + EMAIL_SEPARATOR
+                    + domain;
+        }
+
+        if (uniqueKey.length() <= MIN_LENGTH_FOR_PARTIAL_MASK) {
+            return SHORT_MASK_VALUE;
+        }
+
+        return uniqueKey.substring(0, VISIBLE_PREFIX_LENGTH)
+                + MASK_VALUE
+                + uniqueKey.substring(uniqueKey.length() - VISIBLE_SUFFIX_LENGTH);
     }
 }
