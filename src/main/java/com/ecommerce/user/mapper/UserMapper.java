@@ -2,9 +2,8 @@ package com.ecommerce.user.mapper;
 
 
 import com.ecommerce.user.dto.UserResponseDTO;
-import com.ecommerce.common.entity.UserEntity;
+import com.ecommerce.user.entity.UserEntity;
 import org.springframework.stereotype.Component;
-import com.ecommerce.common.enums.RoleName;
 
 
 /**

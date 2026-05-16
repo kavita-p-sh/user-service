@@ -1,8 +1,8 @@
 package com.ecommerce.user.service.impl;
 
 
-import com.ecommerce.common.entity.UserEntity;
-import com.ecommerce.common.repository.UserRepository;
+import com.ecommerce.user.entity.UserEntity;
+import com.ecommerce.user.repository.UserRepository;
 import com.ecommerce.common.util.AppConstants;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

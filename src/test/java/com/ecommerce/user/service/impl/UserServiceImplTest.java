@@ -1,16 +1,16 @@
 package com.ecommerce.user.service.impl;
 
 
-import com.ecommerce.common.entity.RoleEntity;
-import com.ecommerce.common.entity.UserEntity;
 import com.ecommerce.common.enums.RoleName;
 import com.ecommerce.common.exception.BadRequestException;
 import com.ecommerce.common.exception.ResourceNotFoundException;
-import com.ecommerce.common.repository.RoleRepository;
-import com.ecommerce.common.repository.UserRepository;
+import com.ecommerce.user.repository.RoleRepository;
+import com.ecommerce.user.repository.UserRepository;
 import com.ecommerce.user.dto.RegisterRequestDTO;
 import com.ecommerce.user.dto.UpdateUserDTO;
 import com.ecommerce.user.dto.UserResponseDTO;
+import com.ecommerce.user.entity.RoleEntity;
+import com.ecommerce.user.entity.UserEntity;
 import com.ecommerce.user.mapper.UserMapper;
 import com.ecommerce.user.service.LoggedInUserService;
 import org.junit.jupiter.api.BeforeEach;
