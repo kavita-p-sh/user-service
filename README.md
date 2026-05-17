@@ -60,7 +60,9 @@ ________________________________________________________________________________
 ```
 src/main/java
 │
+├── entity
 ├── controller
+├── repository
 ├── service
 ├── config
 ├── security
@@ -83,7 +85,7 @@ spring.application.name=user-service
 server.port=8095
 
 # Database
-spring.datasource.url=jdbc:mysql://localhost:3306/ecom_db
+spring.datasource.url=jdbc:mysql://localhost:3306/user_service_db
 spring.datasource.username=root
 spring.datasource.password=your_password
 
@@ -99,6 +101,12 @@ jwt.expiration=3600000
 spring.data.redis.host=localhost
 spring.data.redis.port=6379
 ```
+```
+Set environment variables before running locally:
+
+$env:DB_USERNAME="root"
+$env:DB_PASSWORD="your_mysql_password"
+$env:JWT_USER_SECRET="your_jwt_secret"
 
 ____________________________________________________________________________________________________
 ## Build Project
